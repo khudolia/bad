@@ -28,3 +28,8 @@ This solves this by introducing a familiar video-editing-like sequence container
 5. **Resize:** Click and drag the darker left/right edge handles.
 6. **Snap:** Press `Shift + S` to snap the clip to the current frame.
 7. **Properties:** Press `N` to open the sidebar and navigate to the **Clip Tool** tab to change the name, color, and height depth.
+
+## Ideas:
+1. Nesting
+2. Group linking
+3. Responsive keyframes to the group(%, constant, etc...)
