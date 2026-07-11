@@ -1,4 +1,5 @@
 import bpy
+import colorsys
 from .state import clip_interaction
 
 def get_fcu_map(action):
@@ -12,6 +13,33 @@ def get_fcu_map(action):
     elif hasattr(action, "fcurves"):
         fcurves = action.fcurves
     return {fcu.data_path + str(fcu.array_index): fcu for fcu in fcurves}
+
+
+def sync_object_selection(context, group):
+    # 1. Clear current viewport selection
+    for obj in context.scene.objects:
+        try:
+            obj.select_set(False)
+        except RuntimeError:
+            pass  # Ignore objects that cannot be deselected due to current mode
+
+    if not group:
+        return
+
+    # 2. Extract unique action names from the group
+    action_names = {k_ref.action_name for k_ref in group.keys}
+
+    # 3. Select relevant objects
+    for obj in context.scene.objects:
+        if obj.animation_data and obj.animation_data.action:
+            if obj.animation_data.action.name in action_names:
+                # Ensure the object is visible and selectable to prevent context crashes
+                if not obj.hide_get() and not obj.hide_viewport:
+                    try:
+                        obj.select_set(True)
+                        context.view_layer.objects.active = obj
+                    except RuntimeError:
+                        pass
 
 class ANIM_OT_create_clip_group(bpy.types.Operator):
     bl_idname = "anim.create_clip_group"
@@ -62,6 +90,12 @@ class ANIM_OT_create_clip_group(bpy.types.Operator):
             max_frame = min_frame + 1.0
 
         new_group = context.scene.anim_groups.add()
+
+        group_count = len(context.scene.anim_groups)
+        hue = (group_count * 0.618033988749895) % 1.0
+        r, g, b = colorsys.hsv_to_rgb(hue, 0.6, 0.9)  # 0.6 saturation, 0.9 value ensures bright, visible pastels
+        new_group.color = (r, g, b, 0.3)
+
         new_group.name = f"Group {len(context.scene.anim_groups)}"
         new_group.start = min_frame
         new_group.end = max_frame
@@ -225,6 +259,9 @@ class ANIM_OT_interactive_nest_tool(bpy.types.Operator):
                     g.is_selected = False
                 group.is_selected = True
 
+                # --- NEW: Trigger Viewport Selection Sync ---
+                sync_object_selection(context, group)
+
                 self.capture_keys(group)
 
                 if abs(mx - x1) < 15:
@@ -254,6 +291,7 @@ class ANIM_OT_interactive_nest_tool(bpy.types.Operator):
                     g.is_selected = False
                     deselected = True
             if deselected:
+                sync_object_selection(context, None)
                 context.area.tag_redraw()
             return {'PASS_THROUGH'}
 
@@ -350,6 +388,56 @@ class ANIM_OT_select_group_from_viewport(bpy.types.Operator):
                         pass  # Fails silently if view_frame cannot execute
 
         # 5. Force UI Refresh
+        for area in context.screen.areas:
+            area.tag_redraw()
+
+        return {'FINISHED'}
+
+class ANIM_OT_select_single_object(bpy.types.Operator):
+    bl_idname = "anim.select_single_object"
+    bl_label = "Select Object"
+    bl_options = {'UNDO'}
+
+    obj_name: bpy.props.StringProperty()
+
+    def execute(self, context):
+        obj = context.scene.objects.get(self.obj_name)
+        if not obj:
+            return {'CANCELLED'}
+
+        bpy.ops.object.select_all(action='DESELECT')
+
+        if not obj.hide_get() and not obj.hide_viewport:
+            obj.select_set(True)
+            context.view_layer.objects.active = obj
+
+        return {'FINISHED'}
+
+
+class ANIM_OT_remove_object_from_group(bpy.types.Operator):
+    bl_idname = "anim.remove_object_from_group"
+    bl_label = "Remove Object"
+    bl_options = {'UNDO'}
+
+    obj_name: bpy.props.StringProperty()
+
+    def execute(self, context):
+        obj = context.scene.objects.get(self.obj_name)
+        active_group = next((g for g in context.scene.anim_groups if g.is_selected), None)
+
+        if not obj or not active_group:
+            return {'CANCELLED'}
+
+        if not obj.animation_data or not obj.animation_data.action:
+            return {'CANCELLED'}
+
+        action_name = obj.animation_data.action.name
+
+        # Iterate backwards to safely remove items from the collection
+        for i in range(len(active_group.keys) - 1, -1, -1):
+            if active_group.keys[i].action_name == action_name:
+                active_group.keys.remove(i)
+
         for area in context.screen.areas:
             area.tag_redraw()
 

@@ -30,6 +30,8 @@ classes = (
     operators.ANIM_OT_create_clip_group,
     operators.ANIM_OT_delete_clip_group,
     operators.ANIM_OT_interactive_nest_tool,
+    operators.ANIM_OT_select_single_object,
+    operators.ANIM_OT_remove_object_from_group,
     operators.ANIM_OT_select_group_from_viewport,
     ui.DOPESHEET_PT_clip_info,
     ui.VIEW3D_PT_clip_list,

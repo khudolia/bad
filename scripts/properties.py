@@ -26,3 +26,5 @@ class AnimGroup(bpy.types.PropertyGroup):
 
     is_selected: bpy.props.BoolProperty(default=False)
     active_part: bpy.props.StringProperty(default='NONE')
+
+    show_objects: bpy.props.BoolProperty(name="Show Objects", default=False)
