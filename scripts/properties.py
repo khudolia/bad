@@ -1,0 +1,28 @@
+import bpy
+
+class AnimKeyReference(bpy.types.PropertyGroup):
+    action_name: bpy.props.StringProperty()
+    data_path: bpy.props.StringProperty()
+    array_index: bpy.props.IntProperty()
+    kf_index: bpy.props.IntProperty()
+    orig_frame: bpy.props.FloatProperty()
+
+class AnimGroup(bpy.types.PropertyGroup):
+    name: bpy.props.StringProperty(name="Group Name", default="New Group")
+    start: bpy.props.FloatProperty(name="Start")
+    end: bpy.props.FloatProperty(name="End")
+
+    color: bpy.props.FloatVectorProperty(
+        name="Color", subtype='COLOR', default=(0.2, 0.6, 1.0, 0.3), size=4, min=0.0, max=1.0
+    )
+    vertical_depth: bpy.props.IntProperty(name="Vertical Depth", default=1, min=1)
+    keys: bpy.props.CollectionProperty(type=AnimKeyReference)
+
+    responsive_mode: bpy.props.EnumProperty(
+        name="Behavior",
+        items=[('PROPORTIONAL', "Proportional (%)", ""), ('CONSTANT', "Constant", "")],
+        default='CONSTANT'
+    )
+
+    is_selected: bpy.props.BoolProperty(default=False)
+    active_part: bpy.props.StringProperty(default='NONE')
