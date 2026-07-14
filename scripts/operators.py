@@ -41,6 +41,27 @@ def sync_object_selection(context, group):
                     except RuntimeError:
                         pass
 
+def select_group_keyframes_safe(group):
+    # 1. Global context-safe deselection
+    for action in bpy.data.actions:
+        fcu_map = get_fcu_map(action)
+        for fcu in fcu_map.values():
+            for kf in fcu.keyframe_points:
+                kf.select_control_point = False
+
+    # 2. Select keys strictly bound to this group
+    if not group: return
+    fcu_maps = {}
+    for k_ref in group.keys:
+        action = bpy.data.actions.get(k_ref.action_name)
+        if not action: continue
+        if action.name not in fcu_maps:
+            fcu_maps[action.name] = get_fcu_map(action)
+
+        fcu = fcu_maps[action.name].get(k_ref.data_path + str(k_ref.array_index))
+        if fcu and k_ref.kf_index < len(fcu.keyframe_points):
+            fcu.keyframe_points[k_ref.kf_index].select_control_point = True
+
 class ANIM_OT_create_clip_group(bpy.types.Operator):
     bl_idname = "anim.create_clip_group"
     bl_label = "Group Selected Keys"
@@ -238,11 +259,18 @@ class ANIM_OT_interactive_nest_tool(bpy.types.Operator):
         hit_detected = False
         clip_interaction["active_group_idx"] = -1
 
+        import time
+        current_time = time.time()
+        is_double_click = (current_time - clip_interaction["last_click_time"]) < 0.3
+
         for idx, group in enumerate(context.scene.anim_groups):
+            # Pass-through: Ignore the isolated group so user can edit native keyframes
+            if idx == clip_interaction.get("isolated_group_idx", -1):
+                continue
+
             start_px_coord = view2d.view_to_region(group.start, 0, clip=False)
             end_px_coord = view2d.view_to_region(group.end, 0, clip=False)
-            if not start_px_coord or not end_px_coord:
-                continue
+            if not start_px_coord or not end_px_coord: continue
 
             x1, _ = start_px_coord
             x2, _ = end_px_coord
@@ -252,48 +280,101 @@ class ANIM_OT_interactive_nest_tool(bpy.types.Operator):
             if y1 <= my <= y2 and (x1 - 15) <= mx <= (x2 + 15):
                 hit_detected = True
                 clip_interaction["active_group_idx"] = idx
+
+                # --- DOUBLE CLICK LOGIC ---
+                if is_double_click:
+                    clip_interaction["isolated_group_idx"] = idx
+
+                    # 1. Clear current selection
+                    bpy.ops.action.select_all(action='DESELECT')
+
+                    # 2. Select strictly the keys inside this group
+                    fcu_maps = {}
+                    group_paths = {f"{k.action_name}_{k.data_path}_{k.array_index}" for k in group.keys}
+
+                    min_kf, max_kf = None, None
+                    min_frame, max_frame = float('inf'), float('-inf')
+
+                    for k_ref in group.keys:
+                        action = bpy.data.actions.get(k_ref.action_name)
+                        if not action: continue
+                        if action.name not in fcu_maps:
+                            fcu_maps[action.name] = get_fcu_map(action)
+
+                        fcu = fcu_maps[action.name].get(k_ref.data_path + str(k_ref.array_index))
+                        if fcu and k_ref.kf_index < len(fcu.keyframe_points):
+                            kf = fcu.keyframe_points[k_ref.kf_index]
+                            kf.select_control_point = True
+
+                            if kf.co[0] < min_frame:
+                                min_frame, min_kf = kf.co[0], kf
+                            if kf.co[0] > max_frame:
+                                max_frame, max_kf = kf.co[0], kf
+
+                    # 3. Apply temporary 1-frame margin
+                    if min_kf: min_kf.co[0] -= 1
+                    if max_kf and max_kf != min_kf: max_kf.co[0] += 1
+
+                    try:
+                        bpy.ops.action.view_selected()
+                    except RuntimeError:
+                        pass
+                    finally:
+                        if min_kf: min_kf.co[0] += 1
+                        if max_kf and max_kf != min_kf: max_kf.co[0] -= 1
+
+                    # 4. Lock F-Curves not in group
+                    for action in bpy.data.actions:
+                        action_fcu_map = get_fcu_map(action)
+                        for fcu in action_fcu_map.values():
+                            path_id = f"{action.name}_{fcu.data_path}_{fcu.array_index}"
+                            fcu.lock = path_id not in group_paths
+
+                    context.area.tag_redraw()
+                    return {'CANCELLED'}
+
+                # --- SINGLE CLICK LOGIC ---
                 clip_interaction["orig_start"] = group.start
                 clip_interaction["orig_end"] = group.end
-
-                for g in context.scene.anim_groups:
-                    g.is_selected = False
+                for g in context.scene.anim_groups: g.is_selected = False
                 group.is_selected = True
 
-                # --- NEW: Trigger Viewport Selection Sync ---
+                select_group_keyframes_safe(group)
                 sync_object_selection(context, group)
+
+                # --- DRAG ZONE DETECTION & OFFSET FIX ---
+                box_width = x2 - x1
+                ui_scale = context.preferences.view.ui_scale
+                handle_width = min(20 * ui_scale, box_width * 0.15)
+
+                if mx < x1 + handle_width:
+                    clip_interaction["drag_mode"] = 'LEFT'
+                    group.active_part = 'LEFT'
+                    # Fix: Calculate exact offset from the start frame
+                    clip_interaction["drag_offset"] = frame - group.start
+                elif mx > x2 - handle_width:
+                    clip_interaction["drag_mode"] = 'RIGHT'
+                    group.active_part = 'RIGHT'
+                    # Fix: Calculate exact offset from the end frame
+                    clip_interaction["drag_offset"] = frame - group.end
+                else:
+                    clip_interaction["drag_mode"] = 'BODY'
+                    group.active_part = 'BODY'
+                    clip_interaction["drag_offset"] = frame - group.start
 
                 self.capture_keys(group)
 
-                if abs(mx - x1) < 15:
-                    group.active_part = 'LEFT'
-                    clip_interaction["drag_mode"] = 'LEFT'
-                    clip_interaction["drag_offset"] = frame - group.start
-                elif abs(mx - x2) < 15:
-                    group.active_part = 'RIGHT'
-                    clip_interaction["drag_mode"] = 'RIGHT'
-                    clip_interaction["drag_offset"] = frame - group.end
-                else:
-                    group.active_part = 'BODY'
-                    clip_interaction["drag_mode"] = 'BODY'
-                    clip_interaction["drag_offset"] = frame - group.start
-
-                self.deselect_all_keyframes(context)
                 break
+
+        if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
+            clip_interaction["last_click_time"] = current_time
 
         if hit_detected:
             context.window_manager.modal_handler_add(self)
             context.area.tag_redraw()
             return {'RUNNING_MODAL'}
-        else:
-            deselected = False
-            for g in context.scene.anim_groups:
-                if g.is_selected:
-                    g.is_selected = False
-                    deselected = True
-            if deselected:
-                sync_object_selection(context, None)
-                context.area.tag_redraw()
-            return {'PASS_THROUGH'}
+
+        return {'PASS_THROUGH'}
 
     def modal(self, context, event):
         if not context.area or context.area.type != 'DOPESHEET_EDITOR': return {'CANCELLED'}
@@ -373,10 +454,13 @@ class ANIM_OT_select_group_from_viewport(bpy.types.Operator):
                     obj.select_set(True)
                     context.view_layer.objects.active = obj
 
-        # 3. Move Playhead to Group Start
+        # 3. Select Keyframes Context-Safely
+        select_group_keyframes_safe(group)
+
+        # 4. Move Playhead to Group Start
         context.scene.frame_current = int(group.start)
 
-        # 4. Context Override: Force Dopesheet to center on playhead
+        # 5. Context Override: Force Dopesheet to center on playhead
         dopesheet_area = next((a for a in context.screen.areas if a.type == 'DOPESHEET_EDITOR'), None)
         if dopesheet_area:
             dopesheet_region = next((r for r in dopesheet_area.regions if r.type == 'WINDOW'), None)
@@ -387,7 +471,7 @@ class ANIM_OT_select_group_from_viewport(bpy.types.Operator):
                     except RuntimeError:
                         pass  # Fails silently if view_frame cannot execute
 
-        # 5. Force UI Refresh
+        # 6. Force UI Refresh
         for area in context.screen.areas:
             area.tag_redraw()
 
@@ -442,3 +526,71 @@ class ANIM_OT_remove_object_from_group(bpy.types.Operator):
             area.tag_redraw()
 
         return {'FINISHED'}
+
+
+class ANIM_OT_exit_isolation(bpy.types.Operator):
+    bl_idname = "anim.exit_isolation"
+    bl_label = "Exit Group Edit"
+    bl_options = {'UNDO'}
+
+    _timer = None
+    _step = 0
+    _isolated_idx = -1
+
+    def execute(self, context):
+        from .state import clip_interaction
+        self._isolated_idx = clip_interaction.get("isolated_group_idx", -1)
+        clip_interaction["isolated_group_idx"] = -1
+
+        # 1. Unlock all channels synchronously
+        for action in bpy.data.actions:
+            action_fcu_map = get_fcu_map(action)
+            for fcu in action_fcu_map.values():
+                fcu.lock = False
+
+        # Force UI redraw to update cache
+        for area in context.screen.areas:
+            area.tag_redraw()
+
+        # 2. Spin up a modal timer to preserve context for the zoom operation
+        self._step = 0
+        self._timer = context.window_manager.event_timer_add(0.05, window=context.window)
+        context.window_manager.modal_handler_add(self)
+
+        return {'RUNNING_MODAL'}
+
+    def modal(self, context, event):
+        if event.type == 'TIMER':
+            if self._step < 1:
+                self._step += 1
+                return {'RUNNING_MODAL'}
+
+            context.window_manager.event_timer_remove(self._timer)
+
+            dopesheet_area = next((a for a in context.screen.areas if a.type == 'DOPESHEET_EDITOR'), None)
+            if dopesheet_area:
+                dopesheet_region = next((r for r in dopesheet_area.regions if r.type == 'WINDOW'), None)
+                space = dopesheet_area.spaces.active
+                ds = space.dopesheet
+
+                if dopesheet_region:
+                    had_only_selected = ds.show_only_selected
+                    ds.show_only_selected = False
+                    try:
+                        with context.temp_override(window=context.window, area=dopesheet_area, region=dopesheet_region):
+                            bpy.ops.action.select_all(action='SELECT')
+                            bpy.ops.action.view_all()
+                            bpy.ops.action.select_all(action='DESELECT')
+                    except RuntimeError as e:
+                        print(f"[exit_isolation] zoom failed: {e}")
+                    finally:
+                        ds.show_only_selected = had_only_selected
+
+            if 0 <= self._isolated_idx < len(context.scene.anim_groups):
+                group = context.scene.anim_groups[self._isolated_idx]
+                select_group_keyframes_safe(group)
+
+            for area in context.screen.areas:
+                area.tag_redraw()
+            return {'FINISHED'}
+        return {'PASS_THROUGH'}

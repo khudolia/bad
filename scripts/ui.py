@@ -44,6 +44,13 @@ class DOPESHEET_PT_clip_info(bpy.types.Panel):
         active_group = None
         active_group_idx = -1
 
+        from .state import clip_interaction
+        if clip_interaction.get("isolated_group_idx") != -1:
+            box = layout.box()
+            box.label(text="Editing Isolated Group", icon='LOCKED')
+            box.operator("anim.exit_isolation", text="Exit Group Edit", icon='CANCEL')
+            layout.separator()
+
         for i, group in enumerate(context.scene.anim_groups):
             if group.is_selected:
                 active_group = group

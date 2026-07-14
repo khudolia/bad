@@ -33,6 +33,7 @@ classes = (
     operators.ANIM_OT_select_single_object,
     operators.ANIM_OT_remove_object_from_group,
     operators.ANIM_OT_select_group_from_viewport,
+    operators.ANIM_OT_exit_isolation,
     ui.DOPESHEET_PT_clip_info,
     ui.VIEW3D_PT_clip_list,
 )
