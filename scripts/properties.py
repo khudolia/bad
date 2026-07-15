@@ -8,9 +8,16 @@ class AnimKeyReference(bpy.types.PropertyGroup):
     orig_frame: bpy.props.FloatProperty()
 
 class AnimGroup(bpy.types.PropertyGroup):
+    uid: bpy.props.StringProperty()
+    parent_uid: bpy.props.StringProperty(default="")
+
     name: bpy.props.StringProperty(name="Group Name", default="New Group")
     start: bpy.props.FloatProperty(name="Start")
     end: bpy.props.FloatProperty(name="End")
+
+    # Used internally during recursive modal dragging
+    orig_start: bpy.props.FloatProperty()
+    orig_end: bpy.props.FloatProperty()
 
     color: bpy.props.FloatVectorProperty(
         name="Color", subtype='COLOR', default=(0.2, 0.6, 1.0, 0.3), size=4, min=0.0, max=1.0

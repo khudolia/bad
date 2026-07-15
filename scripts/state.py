@@ -3,8 +3,8 @@ clip_interaction = {
     "drag_offset": 0.0,
     "orig_start": 0.0,
     "orig_end": 0.0,
-    "active_group_idx": -1,
-    "isolated_group_idx": -1, # Tracks the group currently being edited
+    "active_group_uid": "",
+    "isolated_group_uid": "", # Tracks the group currently being edited (nested)
     "last_click_time": 0.0    # Tracks double-click deltas
 }
 

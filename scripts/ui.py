@@ -1,7 +1,15 @@
 import bpy
 
+
+def get_all_keys(context, group):
+    res = list(group.keys)
+    for c in context.scene.anim_groups:
+        if c.parent_uid == group.uid:
+            res.extend(get_all_keys(context, c))
+    return res
+
+
 def draw_object_list(layout, context, group):
-    """Shared helper to draw the collapsible object list."""
     box = layout.box()
     header_row = box.row(align=True)
     header_row.prop(group, "show_objects", icon='TRIA_DOWN' if group.show_objects else 'TRIA_RIGHT', text="",
@@ -9,7 +17,8 @@ def draw_object_list(layout, context, group):
     header_row.label(text="Affected Objects")
 
     if group.show_objects:
-        action_names = {k.action_name for k in group.keys}
+        all_keys = get_all_keys(context, group)
+        action_names = {k.action_name for k in all_keys}
         affected_objs = [
             obj for obj in context.scene.objects
             if obj.animation_data and obj.animation_data.action and obj.animation_data.action.name in action_names
@@ -27,11 +36,12 @@ def draw_object_list(layout, context, group):
                 rem_op = obj_row.operator("anim.remove_object_from_group", text="", icon='X')
                 rem_op.obj_name = obj.name
 
+
 def draw_dopesheet_context_menu(self, context):
-    # Only draw the menu item if we are in the Dopesheet
     if context.space_data.type == 'DOPESHEET_EDITOR':
         self.layout.separator()
         self.layout.operator("anim.create_clip_group", icon='GROUP')
+
 
 class DOPESHEET_PT_clip_info(bpy.types.Panel):
     bl_label = "Group Information"
@@ -42,19 +52,21 @@ class DOPESHEET_PT_clip_info(bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         active_group = None
-        active_group_idx = -1
 
         from .state import clip_interaction
-        if clip_interaction.get("isolated_group_idx") != -1:
+        isolated_uid = clip_interaction.get("isolated_group_uid", "")
+
+        if isolated_uid != "":
             box = layout.box()
-            box.label(text="Editing Isolated Group", icon='LOCKED')
-            box.operator("anim.exit_isolation", text="Exit Group Edit", icon='CANCEL')
+            iso_group = next((g for g in context.scene.anim_groups if g.uid == isolated_uid), None)
+            iso_name = iso_group.name if iso_group else "Group"
+            box.label(text=f"Editing: {iso_name}", icon='LOCKED')
+            box.operator("anim.exit_isolation", text="Step Out (Exit Group)", icon='LOOP_BACK')
             layout.separator()
 
-        for i, group in enumerate(context.scene.anim_groups):
+        for group in context.scene.anim_groups:
             if group.is_selected:
                 active_group = group
-                active_group_idx = i
                 break
 
         if not active_group:
@@ -76,7 +88,6 @@ class DOPESHEET_PT_clip_info(bpy.types.Panel):
 
         layout.separator()
 
-        # --- Inject Collapsible Object List Here ---
         draw_object_list(layout, context, active_group)
 
         layout.separator()
@@ -87,11 +98,11 @@ class DOPESHEET_PT_clip_info(bpy.types.Panel):
 
         op_del_group = row.operator("anim.delete_clip_group", text="Remove Group Only")
         op_del_group.delete_keys = False
-        op_del_group.group_idx = active_group_idx
+        op_del_group.group_uid = active_group.uid
 
         op_del_keys = row.operator("anim.delete_clip_group", text="Delete Group + Keys")
         op_del_keys.delete_keys = True
-        op_del_keys.group_idx = active_group_idx
+        op_del_keys.group_uid = active_group.uid
 
 
 class VIEW3D_PT_clip_list(bpy.types.Panel):
@@ -112,23 +123,39 @@ class VIEW3D_PT_clip_list(bpy.types.Panel):
             layout.label(text="No groups created.", icon='INFO')
             return
 
+        from .state import clip_interaction
+        isolated_uid = clip_interaction.get("isolated_group_uid", "")
+
+        if isolated_uid != "":
+            iso_group = next((g for g in groups if g.uid == isolated_uid), None)
+            iso_name = iso_group.name if iso_group else "Group"
+            row = layout.row(align=True)
+            row.operator("anim.exit_isolation", text=f"Exit {iso_name}", icon='LOOP_BACK')
+            layout.separator()
+
         col = layout.column(align=True)
-        for i, group in enumerate(groups):
+        drawn_any = False
+
+        for group in groups:
+            # Only draw groups belonging to current isolated layer
+            if group.parent_uid != isolated_uid:
+                continue
+
+            drawn_any = True
             row = col.row(align=True)
 
             color_col = row.column()
             color_col.enabled = False
             color_col.prop(group, "color", text="")
 
-            # 1. Determine the text state BEFORE creating the operator
             button_text = f"► {group.name}" if group.is_selected else group.name
 
-            # 2. Pass the evaluated text during instantiation
             op = row.operator("anim.select_group_from_viewport", text=button_text)
-            op.group_idx = i
+            op.group_uid = group.uid
 
             if group.is_selected:
                 row.active = True
-
-                # --- Inject Collapsible Object List Here ---
                 draw_object_list(col, context, group)
+
+        if not drawn_any:
+            layout.label(text="No sub-groups.", icon='INFO')
