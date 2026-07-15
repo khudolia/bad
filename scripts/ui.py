@@ -37,6 +37,49 @@ def draw_object_list(layout, context, group):
                 rem_op.obj_name = obj.name
 
 
+def draw_group_tree(layout, context, group, level=0):
+    main_row = layout.row()
+
+    # Calculate visual indentation depth (maxes out reasonably around 5 levels deep)
+    if level > 0:
+        factor = min(level * 0.08, 0.6)
+        split = main_row.split(factor=factor)
+        split.label(text="", icon='BLANK1')
+        content_row = split.row(align=True)
+    else:
+        content_row = main_row.row(align=True)
+
+    color_col = content_row.column()
+    color_col.enabled = False
+    color_col.prop(group, "color", text="")
+
+    prefix = "► " if group.is_selected else ""
+    button_text = f"{prefix}{group.name}"
+    op = content_row.operator("anim.select_group_from_viewport", text=button_text)
+    op.group_uid = group.uid
+
+    if group.is_selected:
+        content_row.active = True
+
+    # Dropdown for objects, dynamically respecting the tree indentation
+    if group.is_selected:
+        obj_main = layout.row()
+        if level > 0:
+            factor = min(level * 0.08, 0.6)
+            split = obj_main.split(factor=factor)
+            split.label(text="", icon='BLANK1')
+            obj_content = split.column()
+        else:
+            obj_content = obj_main.column()
+
+        draw_object_list(obj_content, context, group)
+
+    # Recursively render nested children
+    for child in context.scene.anim_groups:
+        if child.parent_uid == group.uid:
+            draw_group_tree(layout, context, child, level + 1)
+
+
 def draw_dopesheet_context_menu(self, context):
     if context.space_data.type == 'DOPESHEET_EDITOR':
         self.layout.separator()
@@ -87,9 +130,7 @@ class DOPESHEET_PT_clip_info(bpy.types.Panel):
         layout.label(text=f"Bounds: Frame {round(active_group.start)} to {round(active_group.end)}")
 
         layout.separator()
-
         draw_object_list(layout, context, active_group)
-
         layout.separator()
 
         box = layout.box()
@@ -133,29 +174,14 @@ class VIEW3D_PT_clip_list(bpy.types.Panel):
             row.operator("anim.exit_isolation", text=f"Exit {iso_name}", icon='LOOP_BACK')
             layout.separator()
 
-        col = layout.column(align=True)
+        col = layout.column()
         drawn_any = False
 
+        # Traverse from root layers and let the recursion handle everything else
         for group in groups:
-            # Only draw groups belonging to current isolated layer
-            if group.parent_uid != isolated_uid:
-                continue
-
-            drawn_any = True
-            row = col.row(align=True)
-
-            color_col = row.column()
-            color_col.enabled = False
-            color_col.prop(group, "color", text="")
-
-            button_text = f"► {group.name}" if group.is_selected else group.name
-
-            op = row.operator("anim.select_group_from_viewport", text=button_text)
-            op.group_uid = group.uid
-
-            if group.is_selected:
-                row.active = True
-                draw_object_list(col, context, group)
+            if group.parent_uid == "":
+                drawn_any = True
+                draw_group_tree(col, context, group, level=0)
 
         if not drawn_any:
-            layout.label(text="No sub-groups.", icon='INFO')
+            layout.label(text="No root groups found.", icon='INFO')

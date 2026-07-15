@@ -77,7 +77,6 @@ def draw_clip_overlays():
     ui_scale = context.preferences.view.ui_scale
 
     for clip in context.scene.anim_groups:
-        # Only render groups inside the current hierarchy level
         if clip.parent_uid != isolated_uid:
             continue
 
@@ -101,7 +100,9 @@ def draw_clip_overlays():
 
         verts = get_rounded_rect_verts(x1, y1, box_width, box_height, r_rad)
 
-        draw_rounded_rect_solid(verts, clip.color)
+        # Inject fixed 0.3 alpha into the 3-value RGB array
+        solid_color = (clip.color[0], clip.color[1], clip.color[2], 0.3)
+        draw_rounded_rect_solid(verts, solid_color)
 
         if clip.is_selected:
             out_color = (1.0, 0.8, 0.0, 1.0) if clip.active_part != 'NONE' else (1.0, 1.0, 1.0, 0.9)
@@ -143,7 +144,6 @@ def draw_clip_overlays():
             blf.draw(font_id, text_to_draw)
             blf.disable(font_id, blf.SHADOW)
 
-    # Render Isolation Dimming Overlay around the parent
     if isolated_uid != "":
         iso_group = next((g for g in context.scene.anim_groups if g.uid == isolated_uid), None)
         if iso_group:

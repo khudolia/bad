@@ -293,7 +293,6 @@ class ANIM_OT_create_clip_group(bpy.types.Operator):
 
         parent_uid = clip_interaction.get("isolated_group_uid", "")
 
-        # 1. Delete sibling subgroups occupying these keys
         groups_to_delete = []
         for group in context.scene.anim_groups:
             if group.parent_uid == parent_uid:
@@ -306,7 +305,6 @@ class ANIM_OT_create_clip_group(bpy.types.Operator):
         for uid in groups_to_delete:
             delete_group_recursive(context, uid)
 
-        # 2. Extract ownership from parent group
         if parent_uid:
             parent = next((g for g in context.scene.anim_groups if g.uid == parent_uid), None)
             if parent:
@@ -325,7 +323,7 @@ class ANIM_OT_create_clip_group(bpy.types.Operator):
         group_count = len(context.scene.anim_groups)
         hue = (group_count * 0.618033988749895) % 1.0
         r, g, b = colorsys.hsv_to_rgb(hue, 0.6, 0.9)
-        new_group.color = (r, g, b, 0.3)
+        new_group.color = (r, g, b)
         new_group.name = f"Group {len(context.scene.anim_groups)}"
         new_group.start = min_frame
         new_group.end = max_frame
@@ -775,6 +773,10 @@ class ANIM_OT_exit_isolation(bpy.types.Operator):
 
             context.window_manager.event_timer_remove(self._timer)
 
+            target_group = None
+            if self._target_uid:
+                target_group = next((g for g in context.scene.anim_groups if g.uid == self._target_uid), None)
+
             dopesheet_area = next((a for a in context.screen.areas if a.type == 'DOPESHEET_EDITOR'), None)
             if dopesheet_area:
                 dopesheet_region = next((r for r in dopesheet_area.regions if r.type == 'WINDOW'), None)
@@ -786,17 +788,42 @@ class ANIM_OT_exit_isolation(bpy.types.Operator):
                     ds.show_only_selected = False
                     try:
                         with context.temp_override(window=context.window, area=dopesheet_area, region=dopesheet_region):
-                            bpy.ops.action.select_all(action='SELECT')
-                            bpy.ops.action.view_all()
-                            bpy.ops.action.select_all(action='DESELECT')
+                            if target_group:
+                                # Safe selection ensures keys belong ONLY to the target group parent
+                                select_group_keyframes_safe(context, target_group)
+
+                                # Apply temporary 1-frame margin for smooth bounds matching
+                                min_kf, max_kf = None, None
+                                min_frame, max_frame = float('inf'), float('-inf')
+
+                                for action in bpy.data.actions:
+                                    fcu_map = get_fcu_map(action)
+                                    for fcu in fcu_map.values():
+                                        for kf in fcu.keyframe_points:
+                                            if kf.select_control_point:
+                                                if kf.co[0] < min_frame: min_frame, min_kf = kf.co[0], kf
+                                                if kf.co[0] > max_frame: max_frame, max_kf = kf.co[0], kf
+
+                                if min_kf: min_kf.co[0] -= 1
+                                if max_kf and max_kf != min_kf: max_kf.co[0] += 1
+
+                                bpy.ops.action.view_selected()
+
+                                # Immediately collapse frame margin back
+                                if min_kf: min_kf.co[0] += 1
+                                if max_kf and max_kf != min_kf: max_kf.co[0] -= 1
+                            else:
+                                bpy.ops.action.select_all(action='SELECT')
+                                bpy.ops.action.view_all()
+                                bpy.ops.action.select_all(action='DESELECT')
                     except RuntimeError as e:
                         pass
                     finally:
                         ds.show_only_selected = had_only_selected
 
-            if self._target_uid:
-                group = next((g for g in context.scene.anim_groups if g.uid == self._target_uid), None)
-                if group: select_group_keyframes_safe(context, group)
+            # Catch block: retain selection state even if Dopesheet override fails
+            if target_group and not dopesheet_area:
+                select_group_keyframes_safe(context, target_group)
 
             for area in context.screen.areas: area.tag_redraw()
             return {'FINISHED'}
