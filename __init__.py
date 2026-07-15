@@ -34,6 +34,7 @@ classes = (
     operators.ANIM_OT_remove_object_from_group,
     operators.ANIM_OT_select_group_from_viewport,
     operators.ANIM_OT_exit_isolation,
+    operators.ANIM_OT_duplicate_group,
     ui.DOPESHEET_PT_clip_info,
     ui.VIEW3D_PT_clip_list,
 )
@@ -53,8 +54,14 @@ def register():
     wm = bpy.context.window_manager
     if wm and wm.keyconfigs and wm.keyconfigs.addon:
         km = wm.keyconfigs.addon.keymaps.new(name='Dopesheet', space_type='DOPESHEET_EDITOR')
-        kmi = km.keymap_items.new("anim.interactive_nest_tool", 'LEFTMOUSE', 'PRESS')
-        state.addon_keymaps.append((km, kmi))
+
+        # interactive tool hotkey
+        kmi_tool = km.keymap_items.new("anim.interactive_nest_tool", 'LEFTMOUSE', 'PRESS')
+        state.addon_keymaps.append((km, kmi_tool))
+
+        # Shift + D duplication hotkey
+        kmi_dup = km.keymap_items.new("anim.duplicate_group", 'D', 'PRESS', shift=True)
+        state.addon_keymaps.append((km, kmi_dup))
 
     from .scripts.operators import clamp_isolated_keyframes
     if clamp_isolated_keyframes not in bpy.app.handlers.depsgraph_update_post:
@@ -66,6 +73,8 @@ def unregister():
         for km, kmi in state.addon_keymaps:
             km.keymap_items.remove(kmi)
     state.addon_keymaps.clear()
+
+    properties.unregister_clipboard()
 
     from .scripts.operators import clamp_isolated_keyframes
     if clamp_isolated_keyframes in bpy.app.handlers.depsgraph_update_post:

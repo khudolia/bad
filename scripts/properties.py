@@ -28,3 +28,13 @@ class AnimGroup(bpy.types.PropertyGroup):
     active_part: bpy.props.StringProperty(default='NONE')
 
     show_objects: bpy.props.BoolProperty(name="Show Objects", default=False)
+
+def register_clipboard():
+    bpy.types.Scene.anim_group_clipboard = bpy.props.StringProperty(
+        name="Group Clipboard",
+        default="{}"
+    )
+
+def unregister_clipboard():
+    if hasattr(bpy.types.Scene, "anim_group_clipboard"):
+        del bpy.types.Scene.anim_group_clipboard

@@ -1,6 +1,7 @@
 import bpy
 import colorsys
 from .state import clip_interaction
+import re
 
 _is_clamping = False
 
@@ -96,6 +97,160 @@ def select_group_keyframes_safe(group):
         fcu = fcu_maps[action.name].get(k_ref.data_path + str(k_ref.array_index))
         if fcu and k_ref.kf_index < len(fcu.keyframe_points):
             fcu.keyframe_points[k_ref.kf_index].select_control_point = True
+
+
+class ANIM_OT_duplicate_group(bpy.types.Operator):
+    bl_idname = "anim.duplicate_group"
+    bl_label = "Duplicate Active Group"
+    bl_options = {'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        if not hasattr(context.scene, "anim_groups"):
+            return False
+        return any(g.is_selected for g in context.scene.anim_groups)
+
+    def execute(self, context):
+        active_group = next((g for g in context.scene.anim_groups if g.is_selected), None)
+        if not active_group:
+            return {'CANCELLED'}
+
+        # 1. Extract Group Properties
+        orig_name = str(active_group.name)
+        orig_color = list(active_group.color)
+        orig_depth = active_group.vertical_depth
+        orig_mode = active_group.responsive_mode
+        orig_start = active_group.start
+        orig_end = active_group.end
+        duration = orig_end - orig_start
+
+        # 2. Collect ALL Keyframe Data
+        keys_to_duplicate = []
+        fcu_maps = {}
+
+        for k_ref in active_group.keys:
+            action = bpy.data.actions.get(k_ref.action_name)
+            if not action: continue
+            if action.name not in fcu_maps:
+                fcu_maps[action.name] = get_fcu_map(action)
+
+            fcu = fcu_maps[action.name].get(k_ref.data_path + str(k_ref.array_index))
+            if fcu and k_ref.kf_index < len(fcu.keyframe_points):
+                kf = fcu.keyframe_points[k_ref.kf_index]
+
+                keys_to_duplicate.append({
+                    'fcu': fcu,
+                    'co': (kf.co[0], kf.co[1]),
+                    'hl': (kf.handle_left[0], kf.handle_left[1]),
+                    'hr': (kf.handle_right[0], kf.handle_right[1]),
+                    'interp': kf.interpolation,
+                    'easing': getattr(kf, 'easing', 'AUTO'),
+                    'hlt': kf.handle_left_type,
+                    'hrt': kf.handle_right_type,
+                    'amp': getattr(kf, 'amplitude', 0.0),
+                    'per': getattr(kf, 'period', 0.0),
+                    'back': getattr(kf, 'back', 0.0),
+                    'type': getattr(kf, 'type', 'KEYFRAME')
+                })
+
+        if not keys_to_duplicate:
+            self.report({'WARNING'}, "Original group has no valid keyframes.")
+            return {'CANCELLED'}
+
+        # 3. Calculate exact spatial shift relative to playhead
+        current_frame = float(context.scene.frame_current)
+        offset = current_frame - orig_start
+
+        # 4. Clear existing selections
+        for action in bpy.data.actions:
+            for fcu in get_fcu_map(action).values():
+                for kf in fcu.keyframe_points:
+                    kf.select_control_point = False
+                    kf.select_left_handle = False
+                    kf.select_right_handle = False
+
+        # 5. Physically Insert New Keyframes
+        modified_fcus = set()
+        for d in keys_to_duplicate:
+            fcu = d['fcu']
+            new_time = d['co'][0] + offset
+
+            new_kf = fcu.keyframe_points.insert(new_time, d['co'][1])
+
+            new_kf.interpolation = d['interp']
+            new_kf.handle_left_type = d['hlt']
+            new_kf.handle_right_type = d['hrt']
+            new_kf.handle_left = (d['hl'][0] + offset, d['hl'][1])
+            new_kf.handle_right = (d['hr'][0] + offset, d['hr'][1])
+
+            if hasattr(new_kf, 'easing'): new_kf.easing = d['easing']
+            if hasattr(new_kf, 'amplitude'): new_kf.amplitude = d['amp']
+            if hasattr(new_kf, 'period'): new_kf.period = d['per']
+            if hasattr(new_kf, 'back'): new_kf.back = d['back']
+            if hasattr(new_kf, 'type'): new_kf.type = d['type']
+
+            new_kf.select_control_point = True
+            new_kf.select_left_handle = True
+            new_kf.select_right_handle = True
+
+            modified_fcus.add(fcu)
+
+        for fcu in modified_fcus:
+            fcu.update()
+
+        # 6. Global Sequential Naming & Group Creation
+        new_group = context.scene.anim_groups.add()
+
+        import re
+
+        # Isolate true base name (strip existing trailing numbers)
+        base_name = orig_name
+        match_orig = re.search(r" \((\d+)\)$", orig_name)
+        if match_orig:
+            base_name = orig_name[:match_orig.start()]
+
+        # Scan scene to find highest suffix for this base name
+        highest_num = 0
+        for g in context.scene.anim_groups:
+            if g.name == base_name:
+                continue
+
+            if g.name.startswith(base_name + " (") and g.name.endswith(")"):
+                suffix_str = g.name[len(base_name) + 2: -1]
+                if suffix_str.isdigit():
+                    highest_num = max(highest_num, int(suffix_str))
+
+        new_group.name = f"{base_name} ({highest_num + 1})"
+
+        # 7. Map Properties and Spatial Bounds
+        new_group.color = orig_color
+        new_group.vertical_depth = orig_depth
+        new_group.responsive_mode = orig_mode
+        new_group.start = orig_start + offset
+        new_group.end = orig_end + offset
+
+        # 8. Map New Keys
+        for action in bpy.data.actions:
+            fcu_map = get_fcu_map(action)
+            for path, fcu in fcu_map.items():
+                for i, kf in enumerate(fcu.keyframe_points):
+                    if kf.select_control_point:
+                        k_ref = new_group.keys.add()
+                        k_ref.action_name = action.name
+                        k_ref.data_path = fcu.data_path
+                        k_ref.array_index = fcu.array_index
+                        k_ref.kf_index = i
+                        k_ref.orig_frame = kf.co[0]
+
+        # 9. Update UI Selection State
+        for g in context.scene.anim_groups:
+            g.is_selected = False
+        new_group.is_selected = True
+
+        for area in context.screen.areas:
+            area.tag_redraw()
+
+        return {'FINISHED'}
 
 class ANIM_OT_create_clip_group(bpy.types.Operator):
     bl_idname = "anim.create_clip_group"
