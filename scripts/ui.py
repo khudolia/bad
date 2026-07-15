@@ -123,10 +123,6 @@ class DOPESHEET_PT_clip_info(bpy.types.Panel):
         col.prop(active_group, "responsive_mode")
 
         layout.separator()
-        col2 = layout.column(align=True)
-        col2.prop(active_group, "vertical_depth", text="Track Depth")
-
-        layout.separator()
         layout.label(text=f"Bounds: Frame {round(active_group.start)} to {round(active_group.end)}")
 
         layout.separator()

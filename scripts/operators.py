@@ -153,107 +153,137 @@ class ANIM_OT_duplicate_group(bpy.types.Operator):
         active_group = next((g for g in context.scene.anim_groups if g.is_selected), None)
         if not active_group: return {'CANCELLED'}
 
-        orig_name = str(active_group.name)
-        orig_color = list(active_group.color)
-        orig_depth = active_group.vertical_depth
-        orig_mode = active_group.responsive_mode
-        orig_start = active_group.start
-        orig_end = active_group.end
-        orig_parent_uid = active_group.parent_uid
-        duration = orig_end - orig_start
+        def extract_group_data(g_uid):
+            g = next((g for g in context.scene.anim_groups if g.uid == g_uid), None)
+            if not g: return None
 
-        keys_to_duplicate = []
-        fcu_maps = {}
+            data = {
+                'old_uid': g.uid,
+                'parent_uid': g.parent_uid,
+                'name': str(g.name),
+                'color': list(g.color),
+                'vertical_depth': g.vertical_depth,
+                'responsive_mode': g.responsive_mode,
+                'start': g.start,
+                'end': g.end,
+                'keys': [],
+                'children': []
+            }
 
-        for k_ref in active_group.keys:
-            action = bpy.data.actions.get(k_ref.action_name)
-            if not action: continue
-            if action.name not in fcu_maps: fcu_maps[action.name] = get_fcu_map(action)
+            fcu_maps = {}
+            for k_ref in g.keys:
+                action = bpy.data.actions.get(k_ref.action_name)
+                if not action: continue
+                if action.name not in fcu_maps: fcu_maps[action.name] = get_fcu_map(action)
 
-            fcu = fcu_maps[action.name].get(k_ref.data_path + str(k_ref.array_index))
-            if fcu and k_ref.kf_index < len(fcu.keyframe_points):
-                kf = fcu.keyframe_points[k_ref.kf_index]
-                keys_to_duplicate.append({
-                    'fcu': fcu, 'co': (kf.co[0], kf.co[1]), 'hl': (kf.handle_left[0], kf.handle_left[1]),
-                    'hr': (kf.handle_right[0], kf.handle_right[1]), 'interp': kf.interpolation,
-                    'easing': getattr(kf, 'easing', 'AUTO'), 'hlt': kf.handle_left_type,
-                    'hrt': kf.handle_right_type, 'amp': getattr(kf, 'amplitude', 0.0),
-                    'per': getattr(kf, 'period', 0.0), 'back': getattr(kf, 'back', 0.0),
-                    'type': getattr(kf, 'type', 'KEYFRAME')
-                })
+                fcu = fcu_maps[action.name].get(k_ref.data_path + str(k_ref.array_index))
+                if fcu and k_ref.kf_index < len(fcu.keyframe_points):
+                    kf = fcu.keyframe_points[k_ref.kf_index]
+                    data['keys'].append({
+                        'fcu': fcu, 'co': (kf.co[0], kf.co[1]), 'hl': (kf.handle_left[0], kf.handle_left[1]),
+                        'hr': (kf.handle_right[0], kf.handle_right[1]), 'interp': kf.interpolation,
+                        'easing': getattr(kf, 'easing', 'AUTO'), 'hlt': kf.handle_left_type,
+                        'hrt': kf.handle_right_type, 'amp': getattr(kf, 'amplitude', 0.0),
+                        'per': getattr(kf, 'period', 0.0), 'back': getattr(kf, 'back', 0.0),
+                        'type': getattr(kf, 'type', 'KEYFRAME')
+                    })
 
-        if not keys_to_duplicate:
+            for child in context.scene.anim_groups:
+                if child.parent_uid == g_uid:
+                    child_data = extract_group_data(child.uid)
+                    if child_data:
+                        data['children'].append(child_data)
+
+            return data
+
+        tree_data = extract_group_data(active_group.uid)
+
+        def has_any_keys(data):
+            if data['keys']: return True
+            return any(has_any_keys(c) for c in data['children'])
+
+        if not tree_data or not has_any_keys(tree_data):
             self.report({'WARNING'}, "Original group has no valid keyframes.")
             return {'CANCELLED'}
 
         current_frame = float(context.scene.frame_current)
-        offset = current_frame - orig_start
+        offset = current_frame - tree_data['start']
 
-        for action in bpy.data.actions:
-            for fcu in get_fcu_map(action).values():
-                for kf in fcu.keyframe_points:
-                    kf.select_control_point = False
-                    kf.select_left_handle = False
-                    kf.select_right_handle = False
+        def build_group_from_data(data, new_parent_uid, is_root=False):
+            for action in bpy.data.actions:
+                for fcu in get_fcu_map(action).values():
+                    for kf in fcu.keyframe_points:
+                        kf.select_control_point = False
+                        kf.select_left_handle = False
+                        kf.select_right_handle = False
 
-        modified_fcus = set()
-        for d in keys_to_duplicate:
-            fcu = d['fcu']
-            new_time = d['co'][0] + offset
-            new_kf = fcu.keyframe_points.insert(new_time, d['co'][1])
-            new_kf.interpolation = d['interp']
-            new_kf.handle_left_type = d['hlt']
-            new_kf.handle_right_type = d['hrt']
-            new_kf.handle_left = (d['hl'][0] + offset, d['hl'][1])
-            new_kf.handle_right = (d['hr'][0] + offset, d['hr'][1])
-            if hasattr(new_kf, 'easing'): new_kf.easing = d['easing']
-            if hasattr(new_kf, 'amplitude'): new_kf.amplitude = d['amp']
-            if hasattr(new_kf, 'period'): new_kf.period = d['per']
-            if hasattr(new_kf, 'back'): new_kf.back = d['back']
-            if hasattr(new_kf, 'type'): new_kf.type = d['type']
-            new_kf.select_control_point = True
-            new_kf.select_left_handle = True
-            new_kf.select_right_handle = True
-            modified_fcus.add(fcu)
+            modified_fcus = set()
+            for d in data['keys']:
+                fcu = d['fcu']
+                new_time = d['co'][0] + offset
+                new_kf = fcu.keyframe_points.insert(new_time, d['co'][1])
+                new_kf.interpolation = d['interp']
+                new_kf.handle_left_type = d['hlt']
+                new_kf.handle_right_type = d['hrt']
+                new_kf.handle_left = (d['hl'][0] + offset, d['hl'][1])
+                new_kf.handle_right = (d['hr'][0] + offset, d['hr'][1])
+                if hasattr(new_kf, 'easing'): new_kf.easing = d['easing']
+                if hasattr(new_kf, 'amplitude'): new_kf.amplitude = d['amp']
+                if hasattr(new_kf, 'period'): new_kf.period = d['per']
+                if hasattr(new_kf, 'back'): new_kf.back = d['back']
+                if hasattr(new_kf, 'type'): new_kf.type = d['type']
+                new_kf.select_control_point = True
+                new_kf.select_left_handle = True
+                new_kf.select_right_handle = True
+                modified_fcus.add(fcu)
 
-        for fcu in modified_fcus: fcu.update()
+            for fcu in modified_fcus: fcu.update()
 
-        new_group = context.scene.anim_groups.add()
-        new_group.uid = str(uuid.uuid4())
-        new_group.parent_uid = orig_parent_uid
+            new_group = context.scene.anim_groups.add()
+            new_uid = str(uuid.uuid4())
+            new_group.uid = new_uid
+            new_group.parent_uid = new_parent_uid
 
-        base_name = orig_name
-        match_orig = re.search(r" \((\d+)\)$", orig_name)
-        if match_orig: base_name = orig_name[:match_orig.start()]
+            orig_name = data['name']
+            base_name = orig_name
+            match_orig = re.search(r" \((\d+)\)$", orig_name)
+            if match_orig: base_name = orig_name[:match_orig.start()]
 
-        highest_num = 0
-        for g in context.scene.anim_groups:
-            if g.name == base_name: continue
-            if g.name.startswith(base_name + " (") and g.name.endswith(")"):
-                suffix_str = g.name[len(base_name) + 2: -1]
-                if suffix_str.isdigit(): highest_num = max(highest_num, int(suffix_str))
+            highest_num = 0
+            for g in context.scene.anim_groups:
+                if g.uid == new_uid: continue
+                if g.name == base_name: continue
+                if g.name.startswith(base_name + " (") and g.name.endswith(")"):
+                    suffix_str = g.name[len(base_name) + 2: -1]
+                    if suffix_str.isdigit(): highest_num = max(highest_num, int(suffix_str))
 
-        new_group.name = f"{base_name} ({highest_num + 1})"
-        new_group.color = orig_color
-        new_group.vertical_depth = orig_depth
-        new_group.responsive_mode = orig_mode
-        new_group.start = orig_start + offset
-        new_group.end = orig_end + offset
+            new_group.name = f"{base_name} ({highest_num + 1})"
+            new_group.color = data['color']
+            new_group.vertical_depth = data['vertical_depth']
+            new_group.responsive_mode = data['responsive_mode']
+            new_group.start = data['start'] + offset
+            new_group.end = data['end'] + offset
 
-        for action in bpy.data.actions:
-            fcu_map = get_fcu_map(action)
-            for path, fcu in fcu_map.items():
-                for i, kf in enumerate(fcu.keyframe_points):
-                    if kf.select_control_point:
-                        k_ref = new_group.keys.add()
-                        k_ref.action_name = action.name
-                        k_ref.data_path = fcu.data_path
-                        k_ref.array_index = fcu.array_index
-                        k_ref.kf_index = i
-                        k_ref.orig_frame = kf.co[0]
+            for action in bpy.data.actions:
+                fcu_map = get_fcu_map(action)
+                for path, fcu in fcu_map.items():
+                    for i, kf in enumerate(fcu.keyframe_points):
+                        if kf.select_control_point:
+                            k_ref = new_group.keys.add()
+                            k_ref.action_name = action.name
+                            k_ref.data_path = fcu.data_path
+                            k_ref.array_index = fcu.array_index
+                            k_ref.kf_index = i
+                            k_ref.orig_frame = kf.co[0]
 
-        for g in context.scene.anim_groups: g.is_selected = False
-        new_group.is_selected = True
+            if is_root:
+                for g in context.scene.anim_groups: g.is_selected = False
+                new_group.is_selected = True
+
+            for child_data in data['children']:
+                build_group_from_data(child_data, new_uid, is_root=False)
+
+        build_group_from_data(tree_data, active_group.parent_uid, is_root=True)
 
         for area in context.screen.areas: area.tag_redraw()
         return {'FINISHED'}
@@ -789,10 +819,7 @@ class ANIM_OT_exit_isolation(bpy.types.Operator):
                     try:
                         with context.temp_override(window=context.window, area=dopesheet_area, region=dopesheet_region):
                             if target_group:
-                                # Safe selection ensures keys belong ONLY to the target group parent
                                 select_group_keyframes_safe(context, target_group)
-
-                                # Apply temporary 1-frame margin for smooth bounds matching
                                 min_kf, max_kf = None, None
                                 min_frame, max_frame = float('inf'), float('-inf')
 
@@ -809,7 +836,6 @@ class ANIM_OT_exit_isolation(bpy.types.Operator):
 
                                 bpy.ops.action.view_selected()
 
-                                # Immediately collapse frame margin back
                                 if min_kf: min_kf.co[0] += 1
                                 if max_kf and max_kf != min_kf: max_kf.co[0] -= 1
                             else:
@@ -821,7 +847,6 @@ class ANIM_OT_exit_isolation(bpy.types.Operator):
                     finally:
                         ds.show_only_selected = had_only_selected
 
-            # Catch block: retain selection state even if Dopesheet override fails
             if target_group and not dopesheet_area:
                 select_group_keyframes_safe(context, target_group)
 
