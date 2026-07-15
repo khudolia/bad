@@ -56,12 +56,20 @@ def register():
         kmi = km.keymap_items.new("anim.interactive_nest_tool", 'LEFTMOUSE', 'PRESS')
         state.addon_keymaps.append((km, kmi))
 
+    from .scripts.operators import clamp_isolated_keyframes
+    if clamp_isolated_keyframes not in bpy.app.handlers.depsgraph_update_post:
+        bpy.app.handlers.depsgraph_update_post.append(clamp_isolated_keyframes)
+
 def unregister():
     wm = bpy.context.window_manager
     if wm and wm.keyconfigs and wm.keyconfigs.addon:
         for km, kmi in state.addon_keymaps:
             km.keymap_items.remove(kmi)
     state.addon_keymaps.clear()
+
+    from .scripts.operators import clamp_isolated_keyframes
+    if clamp_isolated_keyframes in bpy.app.handlers.depsgraph_update_post:
+        bpy.app.handlers.depsgraph_update_post.remove(clamp_isolated_keyframes)
 
     if hasattr(bpy.types.DOPESHEET_MT_context_menu, "draw") and hasattr(bpy.types.DOPESHEET_MT_context_menu.draw, "_draw_funcs"):
         funcs = [f for f in bpy.types.DOPESHEET_MT_context_menu.draw._draw_funcs if f.__name__ == 'draw_dopesheet_context_menu']

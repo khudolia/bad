@@ -2,6 +2,8 @@ import bpy
 import colorsys
 from .state import clip_interaction
 
+_is_clamping = False
+
 def get_fcu_map(action):
     fcurves = []
     if hasattr(action, "layers"):
@@ -14,6 +16,39 @@ def get_fcu_map(action):
         fcurves = action.fcurves
     return {fcu.data_path + str(fcu.array_index): fcu for fcu in fcurves}
 
+@bpy.app.handlers.persistent
+def clamp_isolated_keyframes(scene, depsgraph):
+    global _is_clamping
+
+    # Safety gate to prevent infinite depsgraph loop crashes
+    if _is_clamping:
+        return
+
+    from .state import clip_interaction
+    isolated_idx = clip_interaction.get("isolated_group_idx", -1)
+    if isolated_idx < 0 or isolated_idx >= len(scene.anim_groups):
+        return
+
+    group = scene.anim_groups[isolated_idx]
+    g_start = group.start
+    g_end = group.end
+
+    _is_clamping = True
+    try:
+        for action in bpy.data.actions:
+            fcu_map = get_fcu_map(action)
+            for fcu in fcu_map.values():
+                if fcu.lock:
+                    continue  # Skip locked curves for performance
+
+                for kf in fcu.keyframe_points:
+                    if kf.select_control_point:
+                        if kf.co[0] < g_start:
+                            kf.co[0] = g_start
+                        elif kf.co[0] > g_end:
+                            kf.co[0] = g_end
+    finally:
+        _is_clamping = False
 
 def sync_object_selection(context, group):
     # 1. Clear current viewport selection
@@ -263,11 +298,10 @@ class ANIM_OT_interactive_nest_tool(bpy.types.Operator):
         current_time = time.time()
         is_double_click = (current_time - clip_interaction["last_click_time"]) < 0.3
 
-        for idx, group in enumerate(context.scene.anim_groups):
-            # Pass-through: Ignore the isolated group so user can edit native keyframes
-            if idx == clip_interaction.get("isolated_group_idx", -1):
-                continue
+        if clip_interaction.get("isolated_group_idx", -1) != -1:
+            return {'PASS_THROUGH'}
 
+        for idx, group in enumerate(context.scene.anim_groups):
             start_px_coord = view2d.view_to_region(group.start, 0, clip=False)
             end_px_coord = view2d.view_to_region(group.end, 0, clip=False)
             if not start_px_coord or not end_px_coord: continue
