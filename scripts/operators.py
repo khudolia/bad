@@ -33,6 +33,33 @@ def get_all_keys(context, group):
             res.extend(get_all_keys(context, c))
     return res
 
+def validate_and_heal_indices(context, group):
+    fcu_maps = {}
+    for k_ref in group.keys:
+        action = bpy.data.actions.get(k_ref.action_name)
+        if not action: continue
+        if action.name not in fcu_maps: fcu_maps[action.name] = get_fcu_map(action)
+
+        fcu = fcu_maps[action.name].get(k_ref.data_path + str(k_ref.array_index))
+        if not fcu: continue
+
+        # Check if the current index is valid
+        is_valid = False
+        if k_ref.kf_index < len(fcu.keyframe_points):
+            if abs(fcu.keyframe_points[k_ref.kf_index].co[0] - k_ref.synced_frame) < 0.001:
+                is_valid = True
+
+        # Heal index by scanning F-Curve
+        if not is_valid:
+            for i, kf in enumerate(fcu.keyframe_points):
+                if abs(kf.co[0] - k_ref.synced_frame) < 0.001:
+                    k_ref.kf_index = i
+                    break
+
+    for c in context.scene.anim_groups:
+        if c.parent_uid == group.uid:
+            validate_and_heal_indices(context, c)
+
 
 def delete_group_recursive(context, uid, delete_keys=False):
     groups = context.scene.anim_groups
@@ -118,6 +145,9 @@ def sync_object_selection(context, group):
 
 
 def select_group_keyframes_safe(context, group):
+    if group:
+        validate_and_heal_indices(context, group)
+
     for action in bpy.data.actions:
         fcu_map = get_fcu_map(action)
         for fcu in fcu_map.values():
@@ -275,6 +305,7 @@ class ANIM_OT_duplicate_group(bpy.types.Operator):
                             k_ref.array_index = fcu.array_index
                             k_ref.kf_index = i
                             k_ref.orig_frame = kf.co[0]
+                            k_ref.synced_frame = kf.co[0]
 
             if is_root:
                 for g in context.scene.anim_groups: g.is_selected = False
@@ -382,6 +413,7 @@ class ANIM_OT_create_clip_group(bpy.types.Operator):
             k_ref.array_index = k_data['array_idx']
             k_ref.kf_index = k_data['kf_idx']
             k_ref.orig_frame = k_data['frame']
+            k_ref.synced_frame = k_data['frame']
 
         for area in context.screen.areas: area.tag_redraw()
         return {'FINISHED'}
@@ -530,6 +562,7 @@ class ANIM_OT_interactive_nest_tool(bpy.types.Operator):
             if y1 <= my <= y2 and (x1 - 15 * ui_scale) <= mx <= (x2 + 15 * ui_scale):
                 hit_detected = True
                 clip_interaction["active_group_uid"] = group.uid
+                validate_and_heal_indices(context, group)
 
                 if is_double_click:
                     clip_interaction["isolated_group_uid"] = group.uid
@@ -623,7 +656,22 @@ class ANIM_OT_interactive_nest_tool(bpy.types.Operator):
             active_uid = clip_interaction.get("active_group_uid", "")
             if active_uid:
                 group = next((g for g in context.scene.anim_groups if g.uid == active_uid), None)
-                if group: group.active_part = 'NONE'
+                if group:
+                    group.active_part = 'NONE'
+
+                    # NEW: Commit new frame positions after drag
+                    def update_synced(g_target):
+                        for k in g_target.keys:
+                            act = bpy.data.actions.get(k.action_name)
+                            if not act: continue
+                            fcu = get_fcu_map(act).get(k.data_path + str(k.array_index))
+                            if fcu and k.kf_index < len(fcu.keyframe_points):
+                                k.synced_frame = fcu.keyframe_points[k.kf_index].co[0]
+                        for c in context.scene.anim_groups:
+                            if c.parent_uid == g_target.uid: update_synced(c)
+
+                    update_synced(group)
+
             context.area.tag_redraw()
             return {'FINISHED'}
 

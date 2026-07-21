@@ -7,6 +7,7 @@ class AnimKeyReference(bpy.types.PropertyGroup):
     array_index: bpy.props.IntProperty()
     kf_index: bpy.props.IntProperty()
     orig_frame: bpy.props.FloatProperty()
+    synced_frame: bpy.props.FloatProperty()
 
 
 class AnimGroup(bpy.types.PropertyGroup):

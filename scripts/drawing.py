@@ -26,6 +26,13 @@ def get_shader(mode='UNIFORM_COLOR'):
     except ValueError:
         return gpu.shader.from_builtin('2D_UNIFORM_COLOR')
 
+def get_all_action_names(group, scene):
+    names = {k.action_name for k in group.keys}
+    for child in scene.anim_groups:
+        if child.parent_uid == group.uid:
+            names.update(get_all_action_names(child, scene))
+    return names
+
 def get_rounded_rect_verts(x, y, width, height, radius):
     segments = 8
     verts = []
@@ -76,9 +83,21 @@ def draw_clip_overlays():
 
     ui_scale = context.preferences.view.ui_scale
 
+    # Cache selected object action names (O(1) lookup map)
+    selected_action_names = set()
+    for obj in context.selected_objects:
+        if obj.animation_data and obj.animation_data.action:
+            selected_action_names.add(obj.animation_data.action.name)
+
     for clip in context.scene.anim_groups:
         if clip.parent_uid != isolated_uid:
             continue
+
+        # Selective Visibility Logic
+        if not clip.is_selected:
+            clip_actions = get_all_action_names(clip, context.scene)
+            if not clip_actions.intersection(selected_action_names):
+                continue
 
         start_px_coord = region.view2d.view_to_region(clip.start, 0, clip=False)
         end_px_coord = region.view2d.view_to_region(clip.end, 0, clip=False)
