@@ -7,18 +7,28 @@ import math
 # ==========================================
 # UI SETTINGS
 # ==========================================
-SETTING_RADIUS = 6.0
-SETTING_OUTLINE_WIDTH_BASE = 1.0
-SETTING_OUTLINE_WIDTH_SEL = 10.0
-SETTING_TOP_OFFSET = 50.0
-
-SETTING_PADDING_X = 14.0
-
-SETTING_TEXT_PADDING_X = 10.0
-SETTING_TEXT_PADDING_Y = 24.0
-SETTING_FONT_SIZE = 18
+# SETTING_RADIUS = 6.0
+# SETTING_OUTLINE_WIDTH_BASE = 1.0
+# SETTING_OUTLINE_WIDTH_SEL = 10.0
+# SETTING_TOP_OFFSET = 50.0
+#
+# SETTING_PADDING_X = 14.0
+#
+# SETTING_TEXT_PADDING_X = 10.0
+# SETTING_TEXT_PADDING_Y = 24.0
+# SETTING_FONT_SIZE = 18
 
 # ==========================================
+
+# --- 1x BASELINE SETTINGS ---
+SETTING_RADIUS = 3.0  # Corner rounding (was 6)
+SETTING_OUTLINE_WIDTH_BASE = 1.0
+SETTING_OUTLINE_WIDTH_SEL = 5.0
+SETTING_TOP_OFFSET = 25.0  # Distance from top of the region (was 50)
+SETTING_PADDING_X = 4.0  # Horizontal padding around keys (was 8)
+SETTING_TEXT_PADDING_X = 5.0  # Title distance from left edge (was 10)
+SETTING_TEXT_PADDING_Y = 12.0  # Title distance from top edge (was 24)
+SETTING_FONT_SIZE = 9  # Base font size (was 18)
 
 def get_shader(mode='UNIFORM_COLOR'):
     try:
@@ -82,6 +92,9 @@ def draw_clip_overlays():
     isolated_uid = clip_interaction.get("isolated_group_uid", "")
 
     ui_scale = context.preferences.view.ui_scale
+    pixel_size = context.preferences.system.pixel_size
+
+    true_scale = ui_scale * pixel_size
 
     # Cache selected object action names (O(1) lookup map)
     selected_action_names = set()
@@ -103,14 +116,14 @@ def draw_clip_overlays():
         end_px_coord = region.view2d.view_to_region(clip.end, 0, clip=False)
         if not start_px_coord or not end_px_coord: continue
 
-        r_rad = SETTING_RADIUS * ui_scale
-        pad = SETTING_PADDING_X * ui_scale
+        r_rad = SETTING_RADIUS * true_scale
+        pad = SETTING_PADDING_X * true_scale
 
         x1 = start_px_coord[0] - pad
         x2 = end_px_coord[0] + pad
 
-        y1 = -100 * ui_scale
-        y2 = region.height - (SETTING_TOP_OFFSET * ui_scale)
+        y1 = -100 * true_scale
+        y2 = region.height - (SETTING_TOP_OFFSET * true_scale)
 
         box_width = x2 - x1
         box_height = y2 - y1
@@ -131,13 +144,13 @@ def draw_clip_overlays():
         draw_rounded_rect_outline(verts, out_color)
 
         font_id = 0
-        blf.size(font_id, int(SETTING_FONT_SIZE * ui_scale))
+        blf.size(font_id, int(SETTING_FONT_SIZE * true_scale))
 
         unique_actions = len(set(k.action_name for k in clip.keys))
         suffix = f" | {unique_actions}"
         base_name = clip.name
 
-        available_width = box_width - (SETTING_TEXT_PADDING_X * 2 * ui_scale)
+        available_width = box_width - (SETTING_TEXT_PADDING_X * 2 * true_scale)
         full_text = f"{base_name}{suffix}"
         text_width = blf.dimensions(font_id, full_text)[0]
         text_to_draw = full_text
@@ -152,13 +165,13 @@ def draw_clip_overlays():
                 text_to_draw = f"{truncated_name}...{suffix}"
 
         if text_to_draw:
-            text_x = x1 + (SETTING_TEXT_PADDING_X * ui_scale)
-            text_y = y2 - (SETTING_TEXT_PADDING_Y * ui_scale)
+            text_x = x1 + (SETTING_TEXT_PADDING_X * true_scale)
+            text_y = y2 - (SETTING_TEXT_PADDING_Y * true_scale)
 
             blf.position(font_id, text_x, text_y, 0)
             blf.enable(font_id, blf.SHADOW)
             blf.shadow(font_id, 5, 0.0, 0.0, 0.0, 0.8)
-            blf.shadow_offset(font_id, int(1 * ui_scale), int(-1 * ui_scale))
+            blf.shadow_offset(font_id, int(1 * true_scale), int(-1 * true_scale))
             blf.color(font_id, 1.0, 1.0, 1.0, 1.0)
             blf.draw(font_id, text_to_draw)
             blf.disable(font_id, blf.SHADOW)

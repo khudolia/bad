@@ -555,11 +555,16 @@ class ANIM_OT_interactive_nest_tool(bpy.types.Operator):
 
             x1, _ = start_px_coord
             x2, _ = end_px_coord
-            ui_scale = context.preferences.view.ui_scale
-            y1 = -100 * ui_scale
-            y2 = window_region.height - (50 * ui_scale)
 
-            if y1 <= my <= y2 and (x1 - 15 * ui_scale) <= mx <= (x2 + 15 * ui_scale):
+            ui_scale = context.preferences.view.ui_scale
+            pixel_size = context.preferences.system.pixel_size
+            true_scale = ui_scale * pixel_size
+
+            y1 = -100 * true_scale
+            # Add 10px vertical tolerance to encompass stroke width and overshoot
+            y2 = window_region.height - (25 * true_scale) + (10 * true_scale)
+
+            if y1 <= my <= y2 and (x1 - 15 * true_scale) <= mx <= (x2 + 15 * true_scale):
                 hit_detected = True
                 clip_interaction["active_group_uid"] = group.uid
                 validate_and_heal_indices(context, group)
@@ -617,8 +622,7 @@ class ANIM_OT_interactive_nest_tool(bpy.types.Operator):
                 sync_object_selection(context, group)
 
                 box_width = x2 - x1
-                ui_scale = context.preferences.view.ui_scale
-                handle_width = min(20 * ui_scale, box_width * 0.15)
+                handle_width = min(20 * true_scale, box_width * 0.15)
 
                 if mx < x1 + handle_width:
                     clip_interaction["drag_mode"] = 'LEFT'
