@@ -285,6 +285,22 @@ class ANIM_OT_duplicate_group(bpy.types.Operator):
 
         build_group_from_data(tree_data, active_group.parent_uid, is_root=True)
 
+        # Inserting keys shifts indices dynamically. We must recalculate them.
+        for g in context.scene.anim_groups:
+            for k_ref in g.keys:
+                action = bpy.data.actions.get(k_ref.action_name)
+                if not action: continue
+
+                fcu_map = get_fcu_map(action)
+                fcu = fcu_map.get(k_ref.data_path + str(k_ref.array_index))
+                if not fcu: continue
+
+                # Match by exact frame position (orig_frame)
+                for i, kf in enumerate(fcu.keyframe_points):
+                    if abs(kf.co[0] - k_ref.orig_frame) < 0.001:
+                        k_ref.kf_index = i
+                        break
+
         for area in context.screen.areas: area.tag_redraw()
         return {'FINISHED'}
 
@@ -507,10 +523,11 @@ class ANIM_OT_interactive_nest_tool(bpy.types.Operator):
 
             x1, _ = start_px_coord
             x2, _ = end_px_coord
-            y2 = window_region.height - 50
-            y1 = y2 - (group.vertical_depth * 34)
+            ui_scale = context.preferences.view.ui_scale
+            y1 = -100 * ui_scale
+            y2 = window_region.height - (50 * ui_scale)
 
-            if y1 <= my <= y2 and (x1 - 15) <= mx <= (x2 + 15):
+            if y1 <= my <= y2 and (x1 - 15 * ui_scale) <= mx <= (x2 + 15 * ui_scale):
                 hit_detected = True
                 clip_interaction["active_group_uid"] = group.uid
 
